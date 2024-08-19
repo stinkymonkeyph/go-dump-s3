@@ -53,7 +53,7 @@ func main() {
 		if err != nil {
 			sendDiscordNotification(fmt.Sprintf("Backup failed for database: %s (file: %s)", dbName, fileName), err, fileName)
 		} else {
-			sendDiscordNotification(fmt.Sprintf("Backup successful for database: %s (file: %s)", dbName, fileName), nil, fileName)
+			sendDiscordNotification(fmt.Sprintf("Backup successful for : %s (file: %s)", dbName, fileName), nil, fileName)
 		}
 	}
 }
