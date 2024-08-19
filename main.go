@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -64,6 +65,7 @@ func generateBackupFileName(dbName string) string {
 }
 
 func backupAndUploadDatabase(svc *s3.S3, dbName string, fileName string) error {
+	log.Printf("Attempting to backup %s \n", dbName)
 	// Create a temporary directory
 	tempDir, err := ioutil.TempDir("", "backup")
 	if err != nil {
@@ -98,12 +100,13 @@ func backupAndUploadDatabase(svc *s3.S3, dbName string, fileName string) error {
 	if err != nil {
 		return fmt.Errorf("failed to upload backup to S3: %w", err)
 	}
-
+	log.Printf("Backup success for %s \n", dbName)
 	// Temp directory and file will be deleted automatically with defer
 	return nil
 }
 
 func uploadToS3(svc *s3.S3, fileName, filePath string) error {
+	log.Printf("Attempting to upload %s \n", fileName)
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
@@ -125,6 +128,7 @@ func uploadToS3(svc *s3.S3, fileName, filePath string) error {
 		return fmt.Errorf("failed to upload file to S3: %w", err)
 	}
 
+	log.Printf("Upload success for %s \n", fileName)
 	return nil
 }
 
