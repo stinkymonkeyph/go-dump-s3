@@ -31,7 +31,7 @@ COPY run_backup.sh /usr/local/bin/run_backup.sh
 RUN chmod +x /usr/local/bin/run_backup.sh
 
 # Add the cron job
-RUN echo "33 * * * * /usr/local/bin/run_backup.sh >> /var/log/cron.log 2>&1" > /etc/crontabs/root
+RUN echo "0 * * * * /usr/local/bin/run_backup.sh >> /var/log/cron.log 2>&1" > /etc/crontabs/root
 
 # Start cron and tail the log file
 CMD ["sh", "-c", "crond -f -l 2 && tail -f /var/log/cron.log"]
