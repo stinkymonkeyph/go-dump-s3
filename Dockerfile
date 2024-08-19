@@ -18,8 +18,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /go/bin/backup-app
 # Use a minimal image for the final stage
 FROM alpine:latest
 
-# Install necessary packages, including mysql-client and cron
-RUN apk --no-cache add ca-certificates mysql-client bash curl cron
+# Install necessary packages, including mysql-client and dcron
+RUN apk --no-cache add ca-certificates mysql-client bash curl dcron
 
 # Copy the Go binary from the builder stage
 COPY --from=builder /go/bin/backup-app /usr/local/bin/backup-app
@@ -33,6 +33,6 @@ RUN chmod +x /usr/local/bin/run_backup.sh
 # Add the cron job
 RUN echo "0 * * * * /usr/local/bin/run_backup.sh >> /var/log/cron.log 2>&1" > /etc/crontabs/root
 
-# Start cron and the application
-CMD ["sh", "-c", "crond && tail -f /var/log/cron.log"]
+# Start cron and tail the log file
+CMD ["sh", "-c", "crond -f -l 2 && tail -f /var/log/cron.log"]
 
