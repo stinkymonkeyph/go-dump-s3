@@ -1,6 +1,6 @@
 module github.com/stinkymonkeyph/go-dump-s3
 
-go 1.22.1
+go 1.23.5
 
 require github.com/aws/aws-sdk-go v1.55.5
 

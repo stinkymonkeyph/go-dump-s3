@@ -33,7 +33,8 @@ var (
 func main() {
 	if bucketName == "" || region == "" || discordURL == "" || len(databases) == 0 ||
 		mysqlUser == "" || mysqlPass == "" || mysqlHost == "" || mysqlPort == "" {
-		fmt.Println("Required environment variables are missing or DATABASES list is empty")
+		errorMsg := "Required environment variables are missing or DATABASES list is empty"
+		log.Println(errorMsg)
 		return
 	}
 
@@ -42,7 +43,9 @@ func main() {
 		Region: aws.String(region)},
 	)
 	if err != nil {
-		sendDiscordNotification("Failed to create AWS session", err, "")
+		errorMsg := fmt.Sprintf("Failed to create AWS session: %v", err)
+		log.Println(errorMsg)
+		sendDiscordNotification(errorMsg, nil, "")
 		return
 	}
 
@@ -50,11 +53,17 @@ func main() {
 
 	for _, dbName := range databases {
 		fileName := generateBackupFileName(dbName)
+		log.Printf("Starting backup process for database: %s", dbName)
+		
 		err := backupAndUploadDatabase(svc, dbName, fileName)
 		if err != nil {
-			sendDiscordNotification(fmt.Sprintf("Backup failed for -> %s (file: %s)", dbName, fileName), err, fileName)
+			errorMsg := fmt.Sprintf("❌ Backup failed for -> %s (file: %s)", dbName, fileName)
+			log.Printf("%s: %v", errorMsg, err)
+			sendDiscordNotification(errorMsg, err, fileName)
 		} else {
-			sendDiscordNotification(fmt.Sprintf("Backup successful for -> %s (file: %s)", dbName, fileName), nil, fileName)
+			successMsg := fmt.Sprintf("✅ Backup successful for -> %s (file: %s)", dbName, fileName)
+			log.Println(successMsg)
+			sendDiscordNotification(successMsg, nil, fileName)
 		}
 	}
 }
@@ -65,7 +74,7 @@ func generateBackupFileName(dbName string) string {
 }
 
 func backupAndUploadDatabase(svc *s3.S3, dbName string, fileName string) error {
-	log.Printf("Attempting to backup %s \n", dbName)
+	log.Printf("Creating temporary directory for backup of %s", dbName)
 	// Create a temporary directory
 	tempDir, err := ioutil.TempDir("", "backup")
 	if err != nil {
@@ -76,37 +85,61 @@ func backupAndUploadDatabase(svc *s3.S3, dbName string, fileName string) error {
 	filePath := filepath.Join(tempDir, fileName)
 
 	// Backup the database to a file
+	log.Printf("Executing mysqldump for %s", dbName)
 	cmd := exec.Command("mysqldump",
 		"-u", mysqlUser,
 		"-p"+mysqlPass,
 		"-h", mysqlHost,
 		"-P", mysqlPort,
+		"--column-statistics=0",
+		"--set-gtid-purged=OFF",
 		dbName)
-	var out bytes.Buffer
-	cmd.Stdout = &out
+		
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	
 	err = cmd.Run()
 	if err != nil {
-		return fmt.Errorf("failed to execute mysqldump: %w", err)
+		return fmt.Errorf("failed to execute mysqldump: %w, stderr: %s", err, stderr.String())
+	}
+
+	if stdout.Len() == 0 {
+		return fmt.Errorf("mysqldump produced empty output")
 	}
 
 	// Write the dump to a file in the temp directory
-	err = os.WriteFile(filePath, out.Bytes(), 0644)
+	log.Printf("Writing backup to file: %s", filePath)
+	err = os.WriteFile(filePath, stdout.Bytes(), 0644)
 	if err != nil {
 		return fmt.Errorf("failed to write backup file: %w", err)
 	}
 
+	// Check file size to make sure something was written
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to stat backup file: %w", err)
+	}
+	
+	log.Printf("Backup file size: %d bytes", fileInfo.Size())
+	if fileInfo.Size() == 0 {
+		return fmt.Errorf("backup file is empty")
+	}
+
 	// Upload the file to S3
+	log.Printf("Uploading backup to S3: %s", fileName)
 	err = uploadToS3(svc, fileName, filePath)
 	if err != nil {
 		return fmt.Errorf("failed to upload backup to S3: %w", err)
 	}
-	log.Printf("Backup success for %s \n", dbName)
+	
+	log.Printf("Backup and upload completed successfully for %s", dbName)
 	// Temp directory and file will be deleted automatically with defer
 	return nil
 }
 
 func uploadToS3(svc *s3.S3, fileName, filePath string) error {
-	log.Printf("Attempting to upload %s \n", fileName)
+	log.Printf("Opening file for S3 upload: %s", filePath)
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
@@ -119,6 +152,7 @@ func uploadToS3(svc *s3.S3, fileName, filePath string) error {
 		s3Key = fmt.Sprintf("%s/%s", strings.TrimSuffix(prefix, "/"), fileName)
 	}
 
+	log.Printf("Putting object to S3 bucket: %s, key: %s", bucketName, s3Key)
 	_, err = svc.PutObject(&s3.PutObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(s3Key),
@@ -128,7 +162,7 @@ func uploadToS3(svc *s3.S3, fileName, filePath string) error {
 		return fmt.Errorf("failed to upload file to S3: %w", err)
 	}
 
-	log.Printf("Upload success for %s \n", fileName)
+	log.Printf("S3 upload completed for: %s", s3Key)
 	return nil
 }
 
@@ -138,18 +172,21 @@ func sendDiscordNotification(message string, err error, fileName string) {
 		content = fmt.Sprintf("%s: %v", message, err)
 	}
 
+	log.Printf("Sending Discord notification: %s", content)
+	
 	// Use Discord webhook to send the message
 	resp, err := http.PostForm(discordURL, url.Values{"content": {content}})
 	if err != nil {
-		fmt.Printf("Failed to send Discord notification: %v\n", err)
+		log.Printf("Failed to send Discord notification: %v", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	// Handle the 204 No Content response as success
 	if resp.StatusCode == http.StatusNoContent {
-		fmt.Println("Discord notification sent successfully.")
+		log.Println("Discord notification sent successfully")
 	} else if resp.StatusCode != http.StatusOK {
-		fmt.Printf("Failed to send Discord notification, status: %s\n", resp.Status)
+		body, _ := ioutil.ReadAll(resp.Body)
+		log.Printf("Failed to send Discord notification, status: %s, response: %s", resp.Status, string(body))
 	}
 }
