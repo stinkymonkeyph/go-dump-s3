@@ -87,13 +87,11 @@ func backupAndUploadDatabase(svc *s3.S3, dbName string, fileName string) error {
 	// Backup the database to a file
 	log.Printf("Executing mysqldump for %s", dbName)
 	cmd := exec.Command("mysqldump",
-		"-u", mysqlUser,
-		"-p"+mysqlPass,
-		"-h", mysqlHost,
-		"-P", mysqlPort,
-		"--column-statistics=0",
-		"--set-gtid-purged=OFF",
-		dbName)
+    "-u", mysqlUser,
+    "-p"+mysqlPass,
+    "-h", mysqlHost,
+    "-P", mysqlPort,
+    dbName)
 		
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
