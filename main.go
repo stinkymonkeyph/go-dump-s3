@@ -19,15 +19,16 @@ import (
 )
 
 var (
-	databases  = strings.Split(os.Getenv("DATABASES"), ",") // List of databases from environment variable
-	bucketName = os.Getenv("S3_BUCKET")                     // S3 bucket name from environment variable
-	region     = os.Getenv("S3_REGION")                     // S3 region from environment variable
-	prefix     = os.Getenv("S3_PREFIX")                     // S3 prefix from environment variable
-	discordURL = os.Getenv("DISCORD_URL")                   // Discord webhook URL from environment variable
-	mysqlUser  = os.Getenv("MYSQL_USER")                    // MySQL username from environment variable
-	mysqlPass  = os.Getenv("MYSQL_PASSWORD")                // MySQL password from environment variable
-	mysqlHost  = os.Getenv("MYSQL_HOST")                    // MySQL host from environment variable
-	mysqlPort  = os.Getenv("MYSQL_PORT")                    // MySQL port from environment variable
+	databases    = strings.Split(os.Getenv("DATABASES"), ",") // List of databases from environment variable
+	bucketName   = os.Getenv("S3_BUCKET")                     // S3 bucket name from environment variable
+	region       = os.Getenv("S3_REGION")                     // S3 region from environment variable
+	prefix       = os.Getenv("S3_PREFIX")                     // S3 prefix from environment variable
+	discordURL   = os.Getenv("DISCORD_URL")                   // Discord webhook URL from environment variable
+	mysqlUser    = os.Getenv("MYSQL_USER")                    // MySQL username from environment variable
+	mysqlPass    = os.Getenv("MYSQL_PASSWORD")                // MySQL password from environment variable
+	mysqlHost    = os.Getenv("MYSQL_HOST")                    // MySQL host from environment variable
+	mysqlPort    = os.Getenv("MYSQL_PORT")                    // MySQL port from environment variable
+	caCertData   = os.Getenv("CA_CERT_DATA")                  // CA certificate content as environment variable
 )
 
 func main() {
@@ -84,14 +85,56 @@ func backupAndUploadDatabase(svc *s3.S3, dbName string, fileName string) error {
 
 	filePath := filepath.Join(tempDir, fileName)
 
+	// Setup for SSL connection
+	var certPath string
+	if caCertData != "" {
+		// Create a temporary file for the CA certificate
+		certPath = filepath.Join(tempDir, "ca-cert.pem")
+		err = os.WriteFile(certPath, []byte(caCertData), 0600)
+		if err != nil {
+			return fmt.Errorf("failed to write CA certificate file: %w", err)
+		}
+		log.Printf("Created temporary CA certificate file at %s", certPath)
+	}
+
+	// Create a temporary cnf file
+	configPath := filepath.Join(tempDir, "my.cnf")
+	var configContent string
+	
+	if certPath != "" {
+		// If a CA certificate is provided, use it
+		log.Printf("Using provided CA certificate for SSL connection")
+		configContent = fmt.Sprintf(`[client]
+user=%s
+password=%s
+host=%s
+port=%s
+ssl-ca=%s
+`, mysqlUser, mysqlPass, mysqlHost, mysqlPort, certPath)
+	} else {
+		// Otherwise, skip SSL verification
+		log.Printf("No CA certificate provided, using ssl-mode without verification")
+		configContent = fmt.Sprintf(`[client]
+user=%s
+password=%s
+host=%s
+port=%s
+ssl=true
+ssl-verify-server-cert=false
+`, mysqlUser, mysqlPass, mysqlHost, mysqlPort)
+	}
+	
+	err = os.WriteFile(configPath, []byte(configContent), 0600)
+	if err != nil {
+		return fmt.Errorf("failed to create MySQL config file: %w", err)
+	}
+	defer os.Remove(configPath)
+
 	// Backup the database to a file
-	log.Printf("Executing mysqldump for %s", dbName)
+	log.Printf("Executing mysqldump for %s with SSL settings", dbName)
 	cmd := exec.Command("mysqldump",
-    "-u", mysqlUser,
-    "-p"+mysqlPass,
-    "-h", mysqlHost,
-    "-P", mysqlPort,
-    dbName)
+		fmt.Sprintf("--defaults-file=%s", configPath),
+		dbName)
 		
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
